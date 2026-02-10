@@ -16,11 +16,11 @@ type topModel struct {
 	height    int
 	now       time.Time
 
-	repoInput     string
-	repos         []string
-	selectedRepo  int
-	projectFocus  projectFocus
-	settingsModel settingsModel
+	repoInput    string
+	repos        []string
+	selectedRepo int
+	projectFocus projectFocus
+	settings     settings
 
 	statusMessage string
 	statusIsError bool
@@ -36,10 +36,10 @@ func newModel() topModel {
 			"Logs",
 			"Settings",
 		},
-		repos:         []string{},
-		projectFocus:  focusInput,
-		now:           time.Now(),
-		settingsModel: newSettingModel(),
+		repos:        []string{},
+		projectFocus: focusInput,
+		now:          time.Now(),
+		settings:     newSettingModel(),
 	}
 }
 
@@ -81,7 +81,7 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case 0:
 			return m.updateProjects(msg)
 		case 3:
-			m.settingsModel = m.settingsModel.Update(msg)
+			m.settings = m.settings.Update(msg)
 			return m, nil
 		}
 
@@ -269,7 +269,7 @@ func (m topModel) renderBody() string {
 	case "Logs":
 		return "Logs\n\nThis section will stream live job output."
 	case "Settings":
-		return m.settingsModel.View()
+		return m.settings.View()
 	default:
 		return ""
 	}

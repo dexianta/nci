@@ -50,7 +50,8 @@ var (
 			Padding(1, 2).
 			MarginRight(1)
 
-	pageCardStyle = cardStyle.Width(0).Height(0).Border(lipgloss.ASCIIBorder(), true, false, false, false)
+	cardFocusedStyle = cardStyle.
+				BorderForeground(lipgloss.Color("45"))
 
 	selectedItemStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("229")).
