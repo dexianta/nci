@@ -17,21 +17,9 @@ type topModel struct {
 	height    int
 	now       time.Time
 
-	repoInput    string
-	repos        []core.CodeRepo
-	selectedRepo int
-	projectFocus projectFocus
-	settings     settings
-
-	statusMessage string
-	statusIsError bool
-
-	svc    core.SvcImpl
-	dbRepo core.DbRepo
-
-	isCloning      bool
-	isLoadingRepo  bool
-	isDeletingRepo bool
+	repoModel     repoModel
+	branchModel   branchModel
+	settingsModel settingsModel
 }
 
 type tickMsg time.Time
@@ -44,12 +32,10 @@ func newModel(svc core.SvcImpl, dbRepo core.DbRepo) topModel {
 			"Logs",
 			"Settings",
 		},
-		repos:        []core.CodeRepo{},
-		projectFocus: focusInput,
-		now:          time.Now(),
-		settings:     newSettingModel(),
-		dbRepo:       dbRepo,
-		svc:          svc,
+		now:           time.Now(),
+		repoModel:     newRepoModel(svc, dbRepo),
+		branchModel:   newBranchModel(dbRepo, svc),
+		settingsModel: newSettingModel(),
 	}
 }
 
@@ -60,68 +46,22 @@ func Run(svc core.SvcImpl, dbRepo core.DbRepo) error {
 }
 
 func (m topModel) Init() tea.Cmd {
-	// first call to fetch the project for landing
-	loadRepoCmd := func() tea.Msg {
-		repos, err := m.dbRepo.ListCodeRepo()
-		return loadRepoMsg{
-			repos: repos,
-			err:   err,
-		}
-	}
-	return tea.Batch(tickCmd(), loadRepoCmd)
+	return tea.Sequence(tickCmd(), m.repoModel.Init())
 }
 
 func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle async repo messages even if user switched tabs while IO was in flight.
+	switch msg.(type) {
+	case addRepoMsg, deleteRepoMsg, loadRepoMsg:
+		var cmd1, cmd2 tea.Cmd
+		m.repoModel, cmd1 = m.repoModel.Update(msg)
+		m.branchModel, cmd2 = m.branchModel.Update(msg)
+		return m, tea.Batch(cmd1, cmd2)
+	}
+
 	switch msg := msg.(type) {
-	case deleteRepoMsg:
-		m.isDeletingRepo = false
-		if msg.err != nil {
-			m.statusMessage = "Failed to delete repo: " + msg.err.Error()
-			m.statusIsError = true
-			return m, nil
-		}
-		deleted := m.repos[m.selectedRepo]
-		m.repos = append(m.repos[:m.selectedRepo], m.repos[m.selectedRepo+1:]...)
-		if m.selectedRepo >= len(m.repos) && m.selectedRepo > 0 {
-			m.selectedRepo--
-		}
-		m.statusMessage = "Deleted: " + deleted.Repo
-		m.statusIsError = false
-		return m, nil
-
-	case addRepoMsg:
-		m.isCloning = false
-		if msg.err != nil {
-			m.statusMessage = "Failed to clone repo: " + msg.err.Error()
-			m.statusIsError = true
-			return m, nil
-		}
-
-		m.repos = append(m.repos, msg.repo)
-		m.selectedRepo = len(m.repos) - 1
-		m.repoInput = ""
-		m.statusMessage = "Repository added."
-		m.statusIsError = false
-		return m, nil
-
-	case loadRepoMsg:
-		m.isLoadingRepo = false
-		if msg.err != nil {
-			m.statusMessage = "Failed to list repos: " + msg.err.Error()
-			m.statusIsError = true
-			return m, nil
-		}
-
-		m.repos = msg.repos
-		m.selectedRepo = 0
-		m.statusIsError = false
-		m.statusMessage = "Repos loaded"
-
-		return m, nil
 	case tea.KeyMsg:
-		key := msg.String()
-
-		switch key {
+		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "left":
@@ -138,152 +78,33 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch m.activeTab {
 		case 0:
-			return m.updateRepos(msg)
+			var cmd tea.Cmd
+			m.repoModel, cmd = m.repoModel.Update(msg)
+			return m, cmd
+		case 1:
+			var cmd tea.Cmd
+			m.branchModel, cmd = m.branchModel.Update(msg)
+			return m, cmd
+
 		case 3:
-			m.settings = m.settings.Update(msg)
+			m.settingsModel = m.settingsModel.Update(msg)
+			return m, nil
+		default:
 			return m, nil
 		}
 
-		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
+
 	case tickMsg:
 		m.now = time.Time(msg)
 		return m, tickCmd()
+
 	default:
 		return m, nil
 	}
-}
-
-type projectFocus int
-
-const (
-	focusInput projectFocus = iota
-	focusRepoList
-)
-
-func (m topModel) updateRepos(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-	switch msg.String() {
-	case "tab", "shift+tab":
-		if m.projectFocus == focusInput {
-			m.projectFocus = focusRepoList
-		} else {
-			m.projectFocus = focusInput
-		}
-		return m, nil
-	case "enter":
-		if m.projectFocus == focusInput {
-			m, cmd = m.addRepo()
-		}
-		return m, cmd
-	case "backspace":
-		if m.projectFocus == focusInput && len(m.repoInput) > 0 {
-			runes := []rune(m.repoInput)
-			m.repoInput = string(runes[:len(runes)-1])
-		}
-		return m, nil
-	case "up", "k":
-		if m.projectFocus == focusRepoList && m.selectedRepo > 0 {
-			m.selectedRepo--
-		}
-		return m, nil
-	case "down", "j":
-		if m.projectFocus == focusRepoList && m.selectedRepo < len(m.repos)-1 {
-			m.selectedRepo++
-		}
-		return m, nil
-	case "d":
-		if m.projectFocus == focusRepoList {
-			m, cmd = m.deleteRepo()
-		}
-		return m, cmd
-	case "esc":
-		if m.projectFocus == focusInput {
-			m.repoInput = ""
-		}
-		m.statusMessage = ""
-		m.statusIsError = false
-		return m, nil
-	}
-
-	if m.projectFocus == focusInput && len(msg.Runes) > 0 {
-		m.repoInput += string(msg.Runes)
-	}
-
-	return m, nil
-}
-
-func (m topModel) addRepo() (topModel, tea.Cmd) {
-	if m.isCloning {
-		// can't do anything?
-		m.statusMessage = "Repo cloning in progress"
-		m.statusIsError = false
-		return m, nil
-	}
-	raw := strings.TrimSpace(m.repoInput)
-	if raw == "" {
-		m.statusMessage = "Please enter a repository URL."
-		m.statusIsError = true
-		return m, nil
-	}
-	if !isRepoURL(raw) {
-		m.statusMessage = "Use a full repo URL (https://... or git@...)."
-		m.statusIsError = true
-		return m, nil
-	}
-
-	repoName := core.ParseGithubUrl(raw)
-	for _, existing := range m.repos {
-		if strings.EqualFold(existing.Repo, raw) {
-			m.statusMessage = "Repo already exists in the list."
-			m.statusIsError = true
-			return m, nil
-		}
-	}
-
-	if repoName == "" {
-		m.statusMessage = "Only GitHub repo URLs are supported for now."
-		m.statusIsError = true
-		return m, nil
-	}
-
-	// start clone
-	m.isCloning = true
-	m.statusMessage = "Cloning repo .."
-	m.statusIsError = false
-
-	cmd := func() tea.Msg {
-		err := m.svc.CloneRepo(repoName, raw)
-		return addRepoMsg{
-			repo: core.CodeRepo{
-				Repo: repoName,
-				URL:  raw,
-			},
-			err: err,
-		}
-	}
-
-	return m, cmd
-}
-
-func (m topModel) deleteRepo() (topModel, tea.Cmd) {
-	if len(m.repos) == 0 {
-		m.statusMessage = "No repository selected."
-		m.statusIsError = true
-		return m, nil
-	}
-
-	deleteCmd := func() tea.Msg {
-		err := m.dbRepo.DeleteRepo(m.repos[m.selectedRepo].Repo)
-		return deleteRepoMsg{err: err}
-	}
-	m.statusMessage = "Delete repo.."
-	m.statusIsError = false
-
-	return m, deleteCmd
 }
 
 func tickCmd() tea.Cmd {
@@ -318,7 +139,7 @@ func (m topModel) View() string {
 	case 0:
 		footer = m.topHelp()
 	case 3:
-		footer = m.settings.help()
+		footer = m.settingsModel.help()
 	}
 
 	footer = lipgloss.JoinVertical(lipgloss.Top, footer, "", globalFooter)
@@ -329,7 +150,7 @@ func (m topModel) View() string {
 		tabs,
 		"",
 		body,
-		"",
+		"\n\n\n\n\n",
 		footer,
 	}, "\n"))
 }
@@ -349,107 +170,14 @@ func (m topModel) renderTabs() string {
 func (m topModel) renderBody() string {
 	switch m.tabs[m.activeTab] {
 	case "Repos":
-		return m.renderRepos()
+		return m.repoModel.View()
 	case "Branches":
-		return m.renderBranchesPlayground()
+		return m.branchModel.View()
 	//case "Logs":
 	//	return "Logs\n\nThis section will stream live job output."
 	case "Settings":
-		return m.settings.View()
+		return m.settingsModel.View()
 	default:
 		return ""
 	}
-}
-
-func (m topModel) renderRepos() string {
-	logo := logoStyle.Render(strings.Join([]string{
-		" _   _  ____ ___ ",
-		"| \\ | |/ ___|_ _|",
-		"|  \\| | |    | | ",
-		"| |\\  | |___ | | ",
-		"|_| \\_|\\____|___|",
-	}, "\n"))
-
-	inputCard := m.renderRepoInput()
-	repoListCard := m.renderRepoList()
-
-	var sections string
-	sections = lipgloss.JoinVertical(lipgloss.Left, inputCard, repoListCard)
-
-	return strings.Join([]string{
-		logo,
-		"",
-		sections,
-	}, "\n")
-}
-
-func (m topModel) renderRepoInput() string {
-	var b strings.Builder
-	b.WriteString(sectionTitleStyle.Render("1) Add Repo"))
-	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("Paste GitHub repo URL, then press enter."))
-	b.WriteString("\n\n")
-
-	inputText := m.repoInput
-	if inputText == "" {
-		inputText = placeholderStyle.Render("https://github.com/owner/repo.git")
-	}
-	cursor := ""
-	if m.projectFocus == focusInput {
-		cursor = "█"
-	}
-	b.WriteString(inputStyle.Render("> " + inputText + cursor))
-
-	if m.statusMessage != "" {
-		b.WriteString("\n\n")
-		if m.statusIsError {
-			b.WriteString(errorStyle.Render(m.statusMessage))
-		} else {
-			b.WriteString(successStyle.Render(m.statusMessage))
-		}
-	}
-
-	style := cardStyle.Border(lipgloss.NormalBorder(), false, false, false, true)
-	if m.projectFocus == focusInput {
-		style = style.BorderForeground(lipgloss.Color("45"))
-	}
-
-	return style.Render(b.String())
-}
-
-func (m topModel) renderRepoList() string {
-	var b strings.Builder
-	b.WriteString(sectionTitleStyle.Render("2) Existing Repos"))
-	b.WriteString("\n")
-
-	if len(m.repos) == 0 {
-		b.WriteString(mutedStyle.Render("No repos yet."))
-	} else {
-		for i, repo := range m.repos {
-			line := fmt.Sprintf("  %s\n  %s", repo.Repo, repo.URL)
-			if i == m.selectedRepo {
-				b.WriteString(selectedItemStyle.Render("> " + strings.TrimSpace(line)))
-			} else {
-				b.WriteString(line)
-			}
-			if i < len(m.repos)-1 {
-				b.WriteString("\n")
-			}
-		}
-	}
-
-	b.WriteString("\n\n")
-	b.WriteString(mutedStyle.Render("tab focus this section, j/k move, d delete"))
-
-	style := cardStyle.Border(lipgloss.NormalBorder(), false, false, false, true)
-	if m.projectFocus == focusRepoList {
-		style = style.BorderForeground(lipgloss.Color("45"))
-	}
-
-	return style.Render(b.String())
-}
-
-func isRepoURL(raw string) bool {
-	s := strings.ToLower(strings.TrimSpace(raw))
-	return strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "git@")
 }

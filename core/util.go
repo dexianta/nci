@@ -58,3 +58,13 @@ func normalizeGithubRepoPath(path string) string {
 	}
 	return owner + "/" + repo
 }
+
+func SafeIdx[T any](idx int, slice []T) (ret T) {
+	if len(slice) == 0 {
+		return ret
+	}
+	if idx >= len(slice) {
+		return slice[len(slice)-1]
+	}
+	return slice[idx]
+}

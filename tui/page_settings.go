@@ -5,7 +5,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-type settings struct {
+type settingsModel struct {
 	sectionIdx   int
 	sectionFocus bool
 	sectionItems []string
@@ -36,8 +36,8 @@ type globalConf struct {
 	gitTimeoutSec     int
 }
 
-func newSettingModel() settings {
-	return settings{
+func newSettingModel() settingsModel {
+	return settingsModel{
 		sectionFocus: true,
 		sectionItems: []string{"Global", "Env Vars", "SSH"},
 		globalConfForm: newForm([]KV{
@@ -53,7 +53,7 @@ func newSettingModel() settings {
 	}
 }
 
-func (s settings) Update(msg tea.KeyMsg) settings {
+func (s settingsModel) Update(msg tea.KeyMsg) settingsModel {
 	switch s.sectionFocus {
 	case true:
 		// focus on section
@@ -86,7 +86,7 @@ func (s settings) Update(msg tea.KeyMsg) settings {
 	return s
 }
 
-func (s settings) View() string {
+func (s settingsModel) View() string {
 	editor := ""
 	switch s.sectionIdx {
 	case 0:
@@ -105,7 +105,7 @@ func (s settings) View() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, s.renderSection(), editor)
 }
 
-func (s settings) renderSection() string {
+func (s settingsModel) renderSection() string {
 	var text = []string{sectionTitleStyle.Render("Sections"), ""}
 	for i, t := range s.sectionItems {
 		if i == s.sectionIdx {
@@ -118,7 +118,7 @@ func (s settings) renderSection() string {
 	return list
 }
 
-func (s settings) activeForm() form {
+func (s settingsModel) activeForm() form {
 	switch s.sectionIdx {
 	case 0:
 		return s.globalConfForm
@@ -129,7 +129,7 @@ func (s settings) activeForm() form {
 	}
 }
 
-func (s settings) help() string {
+func (s settingsModel) help() string {
 	return footerBarStyle.Render(
 		renderHint("up/down", "move "),
 		renderHint("tab", "to focus"),
