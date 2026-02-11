@@ -39,7 +39,7 @@ type tickMsg time.Time
 func newModel(svc core.SvcImpl, dbRepo core.DbRepo) topModel {
 	return topModel{
 		tabs: []string{
-			"Projects",
+			"Repos",
 			"Branches",
 			"Logs",
 			"Settings",
@@ -138,7 +138,7 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch m.activeTab {
 		case 0:
-			return m.updateProjects(msg)
+			return m.updateRepos(msg)
 		case 3:
 			m.settings = m.settings.Update(msg)
 			return m, nil
@@ -164,7 +164,7 @@ const (
 	focusRepoList
 )
 
-func (m topModel) updateProjects(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m topModel) updateRepos(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg.String() {
 	case "tab", "shift+tab":
@@ -308,8 +308,8 @@ func (m topModel) View() string {
 		return "loading..."
 	}
 
-	header := headerStyle.Render("nci  -  zero-overhead CI")
 	subHeader := mutedStyle.Render(fmt.Sprintf("%s", m.now.Format("2006-01-02 15:04:05 Z07:00")))
+	header := lipgloss.JoinHorizontal(lipgloss.Top, headerStyle.Render("nci  -  zero-overhead CI"), " ", subHeader)
 	tabs := m.renderTabs()
 	body := m.renderBody()
 
@@ -325,7 +325,6 @@ func (m topModel) View() string {
 
 	return appStyle.Render(strings.Join([]string{
 		header,
-		subHeader,
 		"",
 		tabs,
 		"",
@@ -349,10 +348,10 @@ func (m topModel) renderTabs() string {
 
 func (m topModel) renderBody() string {
 	switch m.tabs[m.activeTab] {
-	case "Projects":
-		return m.renderProjects()
+	case "Repos":
+		return m.renderRepos()
 	case "Branches":
-		return "Branches\n\nThis section will show branch status and recent runs."
+		return m.renderBranchesPlayground()
 	//case "Logs":
 	//	return "Logs\n\nThis section will stream live job output."
 	case "Settings":
@@ -362,7 +361,7 @@ func (m topModel) renderBody() string {
 	}
 }
 
-func (m topModel) renderProjects() string {
+func (m topModel) renderRepos() string {
 	logo := logoStyle.Render(strings.Join([]string{
 		" _   _  ____ ___ ",
 		"| \\ | |/ ___|_ _|",
@@ -410,7 +409,7 @@ func (m topModel) renderRepoInput() string {
 		}
 	}
 
-	style := cardStyle
+	style := cardStyle.Border(lipgloss.NormalBorder(), false, false, false, true)
 	if m.projectFocus == focusInput {
 		style = style.BorderForeground(lipgloss.Color("45"))
 	}
@@ -427,7 +426,7 @@ func (m topModel) renderRepoList() string {
 		b.WriteString(mutedStyle.Render("No repos yet."))
 	} else {
 		for i, repo := range m.repos {
-			line := fmt.Sprintf("  %d. %s\n%s", i+1, repo.Repo, repo.URL)
+			line := fmt.Sprintf("  %s\n  %s", repo.Repo, repo.URL)
 			if i == m.selectedRepo {
 				b.WriteString(selectedItemStyle.Render("> " + strings.TrimSpace(line)))
 			} else {
@@ -442,7 +441,7 @@ func (m topModel) renderRepoList() string {
 	b.WriteString("\n\n")
 	b.WriteString(mutedStyle.Render("tab focus this section, j/k move, d delete"))
 
-	style := cardStyle
+	style := cardStyle.Border(lipgloss.NormalBorder(), false, false, false, true)
 	if m.projectFocus == focusRepoList {
 		style = style.BorderForeground(lipgloss.Color("45"))
 	}

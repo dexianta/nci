@@ -132,6 +132,6 @@ func (s settings) activeForm() form {
 func (s settings) help() string {
 	return footerBarStyle.Render(
 		renderHint("up/down", "move "),
-		renderHint("tab", "switch pane"),
+		renderHint("tab", "to focus"),
 	)
 }
