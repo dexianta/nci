@@ -11,23 +11,12 @@ import (
 )
 
 var (
-	branchesRegionStyle = lipgloss.NewStyle().
-				Padding(0, 1).
-				BorderStyle(lipgloss.NormalBorder()).
-				BorderTop(true).
-				BorderLeft(false).
-				BorderRight(false).
-				BorderBottom(false).
-				BorderForeground(lipgloss.Color("240"))
-
-	branchesRegionFocusedStyle = branchesRegionStyle.
-					BorderForeground(lipgloss.Color("45"))
 
 	// reload branch & jobs
 	loadBranchCmd = func(dbRepo core.DbRepo, repoName string) func() tea.Msg {
 		return func() tea.Msg {
 			branches, err := dbRepo.ListBranchConf(repoName)
-			return branchesLoadBranchConfMsg{
+			return loadBranchConfMsg{
 				branchConf: branches,
 				err:        err,
 			}
@@ -67,14 +56,13 @@ var (
 type branchModel struct {
 	dbRepo             core.DbRepo
 	svc                core.SvcImpl
-	repos              []core.CodeRepo
+	repo               string
 	branchConf         []core.BranchConf
 	branchConfForm     form
 	jobs               []core.Job
 	statusMsg          string
 	statusInErr        bool
 	activeTab          int
-	selectedRepo       int
 	selectedBranchConf int
 	selectedJobs       int
 }
@@ -87,107 +75,92 @@ func newBranchModel(repo core.DbRepo, svc core.SvcImpl) branchModel {
 	}
 }
 
-func (b branchModel) View() string {
-	return lipgloss.JoinHorizontal(lipgloss.Top, b.renderRepo(), "   ", b.renderBranchConf(), "   ", b.renderJobs())
+func initForm(form form, branchConfs []core.BranchConf) form {
+	var kvs []KV
+	for _, bc := range branchConfs {
+		kvs = append(kvs, KV{
+			key:   bc.RefPattern,
+			val:   bc.ScriptPath,
+			dtype: "string",
+		})
+	}
+	form.kvs = kvs
+	return form
 }
 
-func (b branchModel) Update(msg tea.Msg) (branchModel, tea.Cmd) {
+func (b branchModel) View() string {
+	return lipgloss.JoinHorizontal(lipgloss.Top, b.renderBranchConf(), "   ", b.renderJobs())
+}
+
+func (b branchModel) Update(msg tea.Msg) (branchModel, tea.Cmd, bool) {
 	switch m := msg.(type) {
-	case loadRepoMsg: // can be reused for reload
-		b.repos = m.repos
-		if m.err != nil {
-			b.statusMsg = m.err.Error()
-			b.statusInErr = true
-		}
-		return b, loadBranchCmd(b.dbRepo, b.repos[b.selectedRepo].Repo)
+	case addBranchMsg:
+		// render new kvs for the form
+		b.branchConf = append(b.branchConf, m.added)
+		return b, nil, true
+	case delBranchMsg:
+		// render new kvs for the form
+		b.branchConf = core.RemoveBranchConf(b.branchConf, m.del.Repo, m.del.RefPattern)
+		return b, nil, true
 
-	case addRepoMsg:
-		b.repos = append(b.repos, m.repo)
-		if m.err != nil {
-			b.statusMsg = m.err.Error()
-			b.statusInErr = true
-		}
-		return b, nil
+	case selectRepoMsg: // can be reused for reload
+		b.repo = m.repo
+		return b, loadBranchCmd(b.dbRepo, b.repo), true
 
-	case deleteRepoMsg:
-		b.repos = m.repos
-		if m.err != nil {
-			b.statusMsg = m.err.Error()
-			b.statusInErr = true
-		}
-		if b.selectedRepo >= len(b.repos) {
-			b.selectedRepo = len(b.repos) - 1
-		}
-
-	case branchesLoadBranchConfMsg:
+	case loadBranchConfMsg:
 		b.branchConf = m.branchConf
 		if m.err != nil {
 			b.statusMsg = m.err.Error()
 			b.statusInErr = true
 		}
-
-	case branchesLoadJobMsg:
-		b.jobs = m.jobs
-		if m.err != nil {
-			b.statusMsg = m.err.Error()
-			b.statusInErr = true
-		}
+		b.branchConfForm = initForm(b.branchConfForm, m.branchConf)
+		return b, nil, true
 
 	case tea.KeyMsg:
 		switch m.String() {
 		case "tab": // just move tab
-			b.activeTab = modIdx(b.activeTab, 3, 1)
-			return b, nil
+			b.activeTab = modIdx(b.activeTab, 2, 1)
+			return b, nil, true
 		}
 
+		// section specific
 		switch b.activeTab {
 		case 0:
-			switch m.String() {
-			case "up":
-				b.selectedRepo = modIdx(b.selectedRepo, len(b.repos), -1)
-				b.selectedBranchConf = 0
-				b.selectedJobs = 0
-				return b, loadBranchCmd(b.dbRepo, b.repos[b.selectedRepo].Repo)
-			case "down":
-				b.selectedRepo = modIdx(b.selectedRepo, len(b.repos), 1)
-				b.selectedBranchConf = 0
-				b.selectedJobs = 0
-				return b, loadBranchCmd(b.dbRepo, b.repos[b.selectedRepo].Repo)
-			}
-
-		case 1:
+			var handled bool
 			// each switch need to fetch the job
-			b.branchConfForm = b.branchConfForm.Update(m)
+			b.branchConfForm, handled = b.branchConfForm.Update(m)
 			b.selectedBranchConf = b.branchConfForm.idx
 			b.selectedJobs = 0
 			addKV, delKV := b.branchConfForm.addKV, b.branchConfForm.delKV
 			var addCmd, delCmd tea.Cmd
 			if addKV != nil {
-				addCmd = addBranchConfCmd(b.dbRepo, b.repos[b.selectedRepo].Repo, addKV.key, addKV.val)
+				addCmd = addBranchConfCmd(b.dbRepo, b.repo, addKV.key, addKV.val)
 				b.branchConfForm.addKV = nil
 			}
 			if delKV != nil {
-				delCmd = delBranchConfCmd(b.dbRepo, b.repos[b.selectedRepo].Repo, delKV.key)
+				delCmd = delBranchConfCmd(b.dbRepo, b.repo, delKV.key)
 				b.branchConfForm.delKV = nil
 			}
-			return b, tea.Batch(addCmd, delCmd)
+			return b, tea.Batch(addCmd, delCmd), handled
 
-		case 2:
+		case 1:
 			switch m.String() {
 			case "up":
 				b.selectedJobs = modIdx(b.selectedJobs, len(b.jobs), 1)
+				return b, nil, true
 			case "down":
 				b.selectedJobs = modIdx(b.selectedJobs, len(b.jobs), 1)
+				return b, nil, true
 			}
 		}
 	}
-	return b, nil
+	return b, nil, false
 }
 
 func renderRegion(title string, lines []string, helpText string, focused bool) string {
-	style := branchesRegionStyle
+	style := regionStyle
 	if focused {
-		style = branchesRegionFocusedStyle
+		style = regionFocusedStyle
 	}
 
 	content := lipgloss.JoinVertical(
@@ -203,18 +176,6 @@ func renderRegion(title string, lines []string, helpText string, focused bool) s
 	return style.Render(content)
 }
 
-func (b branchModel) renderRepo() string {
-	text := []string{}
-	for i, r := range b.repos {
-		if b.selectedRepo == i {
-			text = append(text, "> "+r.Repo)
-		} else {
-			text = append(text, "  "+r.Repo)
-		}
-	}
-	return renderRegion("Repos", text, "", b.activeTab == 0)
-}
-
 func (b branchModel) renderBranchConf() string {
 	text := []string{}
 	for i, c := range b.branchConf {
@@ -226,7 +187,7 @@ func (b branchModel) renderBranchConf() string {
 		}
 	}
 
-	return renderRegion("Branch Conf", []string{b.branchConfForm.View()}, "", b.activeTab == 1)
+	return renderRegion("Branch Conf", []string{b.branchConfForm.View()}, "", b.activeTab == 0)
 }
 
 func (b branchModel) renderJobs() string {
@@ -239,7 +200,7 @@ func (b branchModel) renderJobs() string {
 			text = append(text, "  "+line)
 		}
 	}
-	return renderRegion("Last Jobs", text, "", b.activeTab == 2)
+	return renderRegion("Last Jobs", text, "", b.activeTab == 1)
 }
 
 func jobLine(j core.Job, now time.Time) string {
@@ -304,83 +265,4 @@ func timeAgo(now, t time.Time) string {
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
-}
-
-// renderBranches is a static 4-pane demo so you can iterate on layout/styles quickly.
-func (m topModel) renderBranches() string {
-	return renderBranches(m.width, m.height, 1)
-}
-
-func renderBranches(totalW, totalH, focusPane int) string {
-	if totalW <= 0 || totalH <= 0 {
-		return "loading..."
-	}
-
-	gap := 1
-	bodyH := branchesClamp(totalH-14, 10, 40)
-	usableW := branchesClamp(totalW-8, 60, 220)
-	contentW := usableW - (gap * 2)
-
-	leftW := contentW * 25 / 100
-	midW := contentW * 45 / 100
-	rightW := contentW - leftW - midW
-
-	repos := []string{
-		"> acme/api",
-		"  acme/web",
-		"  foo/worker",
-		"  dex/nci",
-	}
-	mappings := []string{
-		"> main      -> .nci/main.sh",
-		"  staging   -> .nci/staging.sh",
-		"  feat-*    -> .nci/feat.sh",
-		"  release-* -> .nci/release.sh",
-	}
-	jobs := []string{
-		"PASS  a1b2c3  0.8s  2m ago",
-		"FAIL  8f9d10  1.1s  8m ago",
-		"PASS  a7c1ef  0.9s  11m ago",
-		"PASS  2dd981  0.7s  14m ago",
-	}
-
-	left := renderBranchesRegion("Repos", repos, leftW, bodyH, focusPane == 0)
-	mid := renderBranchesRegion("Branch Mappings", mappings, midW, bodyH, focusPane == 1)
-	right := renderBranchesRegion("Last Jobs", jobs, rightW, bodyH, focusPane == 2)
-
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), mid, strings.Repeat(" ", gap), right)
-}
-
-func renderBranchesRegion(title string, lines []string, width, height int, focused bool) string {
-	style := branchesRegionStyle
-	if focused {
-		style = branchesRegionFocusedStyle
-	}
-
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
-		sectionTitleStyle.Render(title),
-		"",
-		strings.Join(lines, "\n"),
-	)
-
-	//return style.Width(width).Height(height).Render(content)
-	return style.Render(content)
-}
-
-func branchesClamp(v, low, high int) int {
-	if v < low {
-		return low
-	}
-	if v > high {
-		return high
-	}
-	return v
-}
-
-func branchesMax(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

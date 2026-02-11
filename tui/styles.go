@@ -87,4 +87,16 @@ var (
 				Foreground(lipgloss.Color("230")).
 				Background(lipgloss.Color("24")).
 				Bold(true)
+
+	regionStyle = lipgloss.NewStyle().
+			Padding(0, 1).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderTop(true).
+			BorderLeft(false).
+			BorderRight(false).
+			BorderBottom(false).
+			BorderForeground(lipgloss.Color("240"))
+
+	regionFocusedStyle = regionStyle.
+				BorderForeground(lipgloss.Color("45"))
 )

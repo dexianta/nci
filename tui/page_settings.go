@@ -45,25 +45,26 @@ func newSettingModel() settingsModel {
 			{key: "Git Timeout (s)", val: "3", dtype: "int"},
 			{key: "Log Retention Days", val: "3", dtype: "int"},
 		}, 14, false),
-		varsForm: newForm([]KV{
-			{key: "NCI_ENV", val: "dev", dtype: "string"},
-			{key: "GOFLAGS", val: "-count=1", dtype: "string"},
-		}, 20, true),
+		varsForm:  newForm([]KV{}, 20, true),
 		sshViewer: newSSHViewer(),
 	}
 }
 
-func (s settingsModel) Update(msg tea.KeyMsg) settingsModel {
+func (s settingsModel) Update(msg tea.KeyMsg) (settingsModel, bool) {
+	var handled bool
 	switch s.sectionFocus {
 	case true:
 		// focus on section
 		switch msg.String() {
-		case "up", "k":
+		case "up":
 			s.sectionIdx = modIdx(s.sectionIdx, len(s.sectionItems), -1)
-		case "down", "j":
+			handled = true
+		case "down":
 			s.sectionIdx = modIdx(s.sectionIdx, len(s.sectionItems), 1)
+			handled = true
 		case "tab":
 			s.sectionFocus = false
+			handled = true
 		}
 	case false:
 		// focus on editor
@@ -71,19 +72,19 @@ func (s settingsModel) Update(msg tea.KeyMsg) settingsModel {
 		case "tab":
 			if !s.activeForm().IsEditing() {
 				s.sectionFocus = true
+				handled = true
 			}
-			return s // early return
 		}
 		switch s.sectionIdx {
 		case 0:
-			s.globalConfForm = s.globalConfForm.Update(msg)
+			s.globalConfForm, handled = s.globalConfForm.Update(msg)
 		case 1:
-			s.varsForm = s.varsForm.Update(msg)
+			s.varsForm, handled = s.varsForm.Update(msg)
 		case 2:
 			s.sshViewer = s.sshViewer.Update(msg)
 		}
 	}
-	return s
+	return s, handled
 }
 
 func (s settingsModel) View() string {
@@ -97,12 +98,15 @@ func (s settingsModel) View() string {
 		editor = s.sshViewer.View()
 	}
 
+	section := s.renderSection()
 	if !s.sectionFocus {
-		editor = cardFocusedStyle.Render(editor)
+		editor = regionFocusedStyle.Render(editor)
+		section = regionStyle.Render(section)
 	} else {
-		editor = cardStyle.Render(editor)
+		editor = regionStyle.Render(editor)
+		section = regionFocusedStyle.Render(section)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, s.renderSection(), editor)
+	return lipgloss.JoinHorizontal(lipgloss.Top, section, "   ", editor)
 }
 
 func (s settingsModel) renderSection() string {

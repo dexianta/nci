@@ -56,10 +56,14 @@ func (r SQLiteRepo) ensureSchema() error {
 }
 
 func (r SQLiteRepo) SaveBranchConf(bc BranchConf) error {
-	if _, err := r.db.Exec(
-		`INSERT INTO branch_conf (repo, ref_pattern, script_path) VALUES (?, ?, ?)`,
+	_, err := r.db.Exec(
+		`INSERT INTO branch_conf (repo, ref_pattern, script_path)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(repo, ref_pattern) DO UPDATE
+		 SET script_path = excluded.script_path`,
 		bc.Repo, bc.RefPattern, bc.ScriptPath,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("save branch conf: %w", err)
 	}
 	return nil

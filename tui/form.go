@@ -14,7 +14,6 @@ type formMode int
 const (
 	formModeBrowse formMode = iota
 	formModeEditValue
-	formModeEditKey
 	formModeAddKey
 	formModeAddValue
 )
@@ -26,7 +25,7 @@ type form struct {
 	editable   bool
 
 	mode     formMode
-	input    string
+	input    textInput
 	draftKey string
 	addKV    *KV
 	delKV    *KV
@@ -40,60 +39,60 @@ func newForm(kvs []KV, valueWidth int, editable bool) form {
 		kvs:        kvs,
 		valueWidth: valueWidth,
 		editable:   editable,
+		input:      newTextInput(valueWidth, ""),
 	}
 }
 
-func (f form) Update(msg tea.KeyMsg) form {
+func (f form) Update(msg tea.KeyMsg) (form, bool) {
+	var handled bool
 	if f.mode != formModeBrowse {
 		return f.updateInputMode(msg)
 	}
 
 	switch msg.String() {
-	case "up", "k":
+	case "up":
 		if len(f.kvs) > 0 {
 			f.idx = modIdx(f.idx, len(f.kvs), -1)
+			handled = true
 		}
-	case "down", "j":
+	case "down":
 		if len(f.kvs) > 0 {
 			f.idx = modIdx(f.idx, len(f.kvs), 1)
-		}
-	case "enter":
-		if len(f.kvs) > 0 {
-			f.mode = formModeEditValue
-			f.input = f.kvs[f.idx].val
+			handled = true
 		}
 	case "e":
-		if f.editable && len(f.kvs) > 0 {
-			f.mode = formModeEditKey
-			f.input = f.kvs[f.idx].key
+		if len(f.kvs) > 0 {
+			f.mode = formModeEditValue
+			f.input = f.input.SetWidth(f.valueContentWidth()).SetValue(f.kvs[f.idx].val)
+			handled = true
 		}
 	case "a":
 		if f.editable {
 			f.mode = formModeAddKey
-			f.input = ""
+			f.input = f.input.SetWidth(f.keyContentWidth()).Clear()
 			f.draftKey = ""
+			handled = true
 		}
 	case "d":
 		if f.editable {
 			f = f.deleteAtSelection()
+			handled = true
 		}
 	}
-	return f
+	return f, handled
 }
 
 func (f form) View() string {
 	var text = []string{}
 	for i, pair := range f.kvs {
-		rowFocused := i == f.idx && f.mode == formModeBrowse
+		rowFocused := i == f.idx
 		label := pair.key
 		value := pair.val
 
 		if i == f.idx {
 			switch f.mode {
-			case formModeEditKey:
-				label = f.input + "█"
 			case formModeEditValue:
-				value = f.input + "█"
+				value = f.input.SetWidth(f.valueContentWidth()).View(true)
 			}
 		}
 
@@ -108,11 +107,11 @@ func (f form) View() string {
 		addLabel := "new key"
 		addValue := ""
 		if f.mode == formModeAddKey {
-			addLabel = f.input + "█"
+			addLabel = f.input.SetWidth(f.keyContentWidth()).View(true)
 		}
 		if f.mode == formModeAddValue {
 			addLabel = f.draftKey
-			addValue = f.input + "█"
+			addValue = f.input.SetWidth(f.valueContentWidth()).View(true)
 		}
 		text = append(text, renderLabelInputRow(addLabel, addValue, true, f.valueWidth))
 	}
@@ -137,55 +136,48 @@ func (f form) IsEditing() bool {
 func (f form) helpText() string {
 	if f.mode == formModeBrowse {
 		if f.editable {
-			return "[j/k]move [e]dit [k]ey [a]dd [d]elete"
+			return "[up/down] [e]dit-value [a]dd [d]elete"
 		}
-		return "[j/k]move [e]dit"
+		return "[up/down] [e]dit"
 	}
 
 	switch f.mode {
-	case formModeEditKey:
-		return "Editing key: [enter]save [esc]cancel"
 	case formModeEditValue:
-		return "Editing value: [enter]save [esc]cancel"
+		return "Editing value: [left/right]move [enter]save [esc]cancel"
 	case formModeAddKey:
-		return "Adding entry key: [enter]to val [esc]cancel"
+		return "Adding entry key: [left/right]move [enter]to val [esc]cancel"
 	case formModeAddValue:
-		return "Adding entry value: [enter]save [esc]cancel"
+		return "Adding entry value: [left/right]move [enter]save [esc]cancel"
 	default:
 		return ""
 	}
 }
 
-func (f form) updateInputMode(msg tea.KeyMsg) form {
+func (f form) updateInputMode(msg tea.KeyMsg) (form, bool) {
 	switch msg.String() {
 	case "esc":
 		f.mode = formModeBrowse
-		f.input = ""
+		f.input = f.input.Clear()
 		f.draftKey = ""
-		return f
+		return f, true
 	case "enter":
-		return f.commitInput()
-	case "backspace":
-		if len(f.input) > 0 {
-			runes := []rune(f.input)
-			f.input = string(runes[:len(runes)-1])
-		}
-		return f
+		return f.commitInput(), true
 	}
 
-	if len(msg.Runes) > 0 {
-		f.input += string(msg.Runes)
-	}
-	return f
+	nextInput, handled := f.input.Update(msg)
+	f.input = nextInput
+	return f, handled
 }
 
 func (f form) commitInput() form {
+	raw := f.input.Value()
+
 	switch f.mode {
 	case formModeEditValue:
 		if len(f.kvs) == 0 {
 			return f
 		}
-		sanitized, err := sanitizeValueForType(f.kvs[f.idx].dtype, f.input)
+		sanitized, err := sanitizeValueForType(f.kvs[f.idx].dtype, raw)
 		if err != nil {
 			f.statusMessage = fmt.Sprintf("Invalid value for %s: %v", f.kvs[f.idx].key, err)
 			f.statusIsError = true
@@ -195,32 +187,10 @@ func (f form) commitInput() form {
 		f.statusMessage = fmt.Sprintf("Updated value: %s", f.kvs[f.idx].key)
 		f.statusIsError = false
 		f.mode = formModeBrowse
-		f.input = ""
+		f.input = f.input.Clear()
 		f.addKV = &f.kvs[f.idx]
-	case formModeEditKey:
-		if len(f.kvs) == 0 {
-			return f
-		}
-		key := strings.TrimSpace(f.input)
-		if key == "" {
-			f.statusMessage = "Key cannot be empty."
-			f.statusIsError = true
-			return f
-		}
-		if f.hasDuplicateKey(key, f.idx) {
-			f.statusMessage = "Key already exists."
-			f.statusIsError = true
-			return f
-		}
-		f.kvs[f.idx].key = key
-		f.statusMessage = "Updated key."
-		f.statusIsError = false
-		f.mode = formModeBrowse
-		f.input = ""
-		f.addKV = &f.kvs[f.idx]
-
 	case formModeAddKey:
-		key := strings.TrimSpace(f.input)
+		key := strings.TrimSpace(raw)
 		if key == "" {
 			f.statusMessage = "Key cannot be empty."
 			f.statusIsError = true
@@ -232,14 +202,14 @@ func (f form) commitInput() form {
 			return f
 		}
 		f.draftKey = key
-		f.input = ""
+		f.input = f.input.SetWidth(f.valueContentWidth()).Clear()
 		f.mode = formModeAddValue
 		f.statusMessage = ""
 		f.statusIsError = false
 
 	case formModeAddValue:
 		dtype := "string"
-		sanitized, err := sanitizeValueForType(dtype, f.input)
+		sanitized, err := sanitizeValueForType(dtype, raw)
 		if err != nil {
 			f.statusMessage = fmt.Sprintf("Invalid value: %v", err)
 			f.statusIsError = true
@@ -254,7 +224,7 @@ func (f form) commitInput() form {
 		f.mode = formModeBrowse
 		f.statusMessage = "Added new entry."
 		f.statusIsError = false
-		f.input = ""
+		f.input = f.input.Clear()
 		f.draftKey = ""
 		f.addKV = &f.kvs[f.idx]
 	}
@@ -280,14 +250,14 @@ func (f form) deleteAtSelection() form {
 		return f
 	}
 
-	deleted := f.kvs[f.idx].key
+	deleted := f.kvs[f.idx]
+	f.delKV = &deleted
 	f.kvs = append(f.kvs[:f.idx], f.kvs[f.idx+1:]...)
 	if f.idx >= len(f.kvs) && f.idx > 0 {
 		f.idx--
 	}
-	f.statusMessage = fmt.Sprintf("Deleted: %s", deleted)
+	f.statusMessage = fmt.Sprintf("Deleted: %s", deleted.key)
 	f.statusIsError = false
-	f.delKV = &f.kvs[f.idx]
 	return f
 }
 
@@ -326,4 +296,50 @@ func sanitizeValueForType(dtype, raw string) (string, error) {
 	default:
 		return raw, nil
 	}
+}
+
+func (f form) valueContentWidth() int {
+	w := f.valueWidth - valueStyle.GetHorizontalFrameSize()
+	if w < 1 {
+		return 1
+	}
+	return w
+}
+
+func (f form) keyContentWidth() int {
+	w := labelStyle.GetWidth()
+	if w < 1 {
+		return 22
+	}
+	return w
+}
+
+func renderInputViewport(input string, cursor, width int) string {
+	if width < 1 {
+		width = 1
+	}
+
+	runes := []rune(input)
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+
+	visibleInput := max(
+		// keep room for cursor block
+		width-1, 1)
+
+	start := 0
+	if cursor > visibleInput {
+		start = cursor - visibleInput
+	}
+	end := min(start+visibleInput, len(runes))
+
+	segment := runes[start:end]
+	pos := min(max(cursor-start, 0), len(segment))
+
+	withCursor := string(segment[:pos]) + "|" + string(segment[pos:])
+	return truncateRunes(withCursor, width)
 }

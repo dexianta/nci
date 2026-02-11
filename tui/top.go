@@ -11,11 +11,12 @@ import (
 )
 
 type topModel struct {
-	tabs      []string
-	activeTab int
-	width     int
-	height    int
-	now       time.Time
+	tabs         []string
+	activeTab    int
+	width        int
+	height       int
+	now          time.Time
+	selectedRepo string
 
 	repoModel     repoModel
 	branchModel   branchModel
@@ -27,7 +28,6 @@ type tickMsg time.Time
 func newModel(svc core.SvcImpl, dbRepo core.DbRepo) topModel {
 	return topModel{
 		tabs: []string{
-			"Repos",
 			"Branches",
 			"Logs",
 			"Settings",
@@ -51,46 +51,77 @@ func (m topModel) Init() tea.Cmd {
 
 func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle async repo messages even if user switched tabs while IO was in flight.
-	switch msg.(type) {
-	case addRepoMsg, deleteRepoMsg, loadRepoMsg:
+	var handled bool
+	var cmd tea.Cmd
+
+	// special state msgs
+	switch mg := msg.(type) {
+	case addRepoMsg, deleteRepoMsg, loadRepoMsg, loadBranchConfMsg:
 		var cmd1, cmd2 tea.Cmd
 		m.repoModel, cmd1 = m.repoModel.Update(msg)
-		m.branchModel, cmd2 = m.branchModel.Update(msg)
+		m.branchModel, cmd2, handled = m.branchModel.Update(msg)
 		return m, tea.Batch(cmd1, cmd2)
+	case selectRepoMsg:
+		var cmd1 tea.Cmd
+		m.selectedRepo = mg.repo
+		m.branchModel, cmd1, handled = m.branchModel.Update(msg)
+		return m, cmd1
+	}
+
+	// the result of the key stuff
+	switch m.selectedRepo {
+	case "":
+		// top
+		m.repoModel, cmd = m.repoModel.Update(msg)
+
+	default:
+		// entered a project
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch m.activeTab {
+			case 0:
+				m.branchModel, cmd, handled = m.branchModel.Update(msg)
+
+			case 2:
+				m.settingsModel, handled = m.settingsModel.Update(msg)
+			}
+
+			switch msg.String() {
+			case "left":
+				if !handled {
+					if m.selectedRepo != "" {
+						if m.activeTab > 0 {
+							m.activeTab--
+						}
+					}
+					return m, nil
+				}
+			case "right":
+				if !handled {
+					if m.selectedRepo != "" {
+						if m.activeTab < len(m.tabs)-1 {
+							m.activeTab++
+						}
+					}
+					return m, nil
+				}
+			}
+		}
 	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
-			return m, tea.Quit
-		case "left":
-			if m.activeTab > 0 {
-				m.activeTab--
+			if !handled {
+				return m, tea.Quit
 			}
-			return m, nil
-		case "right":
-			if m.activeTab < len(m.tabs)-1 {
-				m.activeTab++
+
+		case "esc":
+			if !handled {
+				m.selectedRepo = ""
+				return m, nil
 			}
-			return m, nil
-		}
-
-		switch m.activeTab {
-		case 0:
-			var cmd tea.Cmd
-			m.repoModel, cmd = m.repoModel.Update(msg)
-			return m, cmd
-		case 1:
-			var cmd tea.Cmd
-			m.branchModel, cmd = m.branchModel.Update(msg)
-			return m, cmd
-
-		case 3:
-			m.settingsModel = m.settingsModel.Update(msg)
-			return m, nil
-		default:
-			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -101,10 +132,9 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.now = time.Time(msg)
 		return m, tickCmd()
-
-	default:
-		return m, nil
 	}
+
+	return m, cmd
 }
 
 func tickCmd() tea.Cmd {
@@ -114,7 +144,7 @@ func tickCmd() tea.Cmd {
 }
 
 var globalFooter = footerBarStyle.Render(
-	renderHint("left/right", "switch tab "),
+	renderHint("esc", "top"),
 	renderHint("ctrl+c", "quit"),
 )
 
@@ -131,22 +161,30 @@ func (m topModel) View() string {
 
 	subHeader := mutedStyle.Render(fmt.Sprintf("%s", m.now.Format("2006-01-02 15:04:05 Z07:00")))
 	header := lipgloss.JoinHorizontal(lipgloss.Top, headerStyle.Render("nci  -  zero-overhead CI"), " ", subHeader)
-	tabs := m.renderTabs()
+	proj := m.selectedRepo
+	tabs := ""
+	if m.selectedRepo != "" {
+		tabs = m.renderTabs()
+	}
 	body := m.renderBody()
 
 	var footer string
-	switch m.activeTab {
-	case 0:
+	if m.selectedRepo == "" {
 		footer = m.topHelp()
-	case 3:
-		footer = m.settingsModel.help()
+	} else {
+		switch m.activeTab {
+		case 2:
+			footer = m.settingsModel.help()
+		}
 	}
 
 	footer = lipgloss.JoinVertical(lipgloss.Top, footer, "", globalFooter)
-
+	if proj != "" {
+		proj = sectionTitleStyle.Render(fmt.Sprint("\n", ">> "+proj, "\n"))
+	}
 	return appStyle.Render(strings.Join([]string{
 		header,
-		"",
+		proj,
 		tabs,
 		"",
 		body,
@@ -168,9 +206,11 @@ func (m topModel) renderTabs() string {
 }
 
 func (m topModel) renderBody() string {
-	switch m.tabs[m.activeTab] {
-	case "Repos":
+	if m.selectedRepo == "" {
 		return m.repoModel.View()
+	}
+
+	switch m.tabs[m.activeTab] {
 	case "Branches":
 		return m.branchModel.View()
 	//case "Logs":

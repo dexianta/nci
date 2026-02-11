@@ -12,7 +12,7 @@ import (
 type repoModel struct {
 	svc            core.SvcImpl
 	dbRepo         core.DbRepo
-	repoInput      string
+	repoInput      textInput
 	repos          []core.CodeRepo
 	selectedRepo   int
 	projectFocus   projectFocus
@@ -34,6 +34,7 @@ func newRepoModel(svc core.SvcImpl, dbRepo core.DbRepo) repoModel {
 	return repoModel{
 		svc:          svc,
 		dbRepo:       dbRepo,
+		repoInput:    newTextInput(52, "https://github.com/owner/repo.git"),
 		repos:        []core.CodeRepo{},
 		projectFocus: focusInput,
 	}
@@ -75,7 +76,7 @@ func (m repoModel) Update(msg tea.Msg) (repoModel, tea.Cmd) {
 		}
 		m.repos = append(m.repos, msg.repo)
 		m.selectedRepo = len(m.repos) - 1
-		m.repoInput = ""
+		m.repoInput = m.repoInput.Clear()
 		m.statusMessage = "Repository added."
 		m.statusIsError = false
 		return m, nil
@@ -116,19 +117,21 @@ func (m repoModel) updateKey(msg tea.KeyMsg) (repoModel, tea.Cmd) {
 		if m.projectFocus == focusInput {
 			m, cmd = m.addRepo()
 		}
-		return m, cmd
-	case "backspace":
-		if m.projectFocus == focusInput && len(m.repoInput) > 0 {
-			runes := []rune(m.repoInput)
-			m.repoInput = string(runes[:len(runes)-1])
+		if m.projectFocus == focusRepoList {
+			// enter
+			return m, func() tea.Msg {
+				return selectRepoMsg{
+					repo: m.repos[m.selectedRepo].Repo,
+				}
+			}
 		}
-		return m, nil
-	case "up", "k":
+		return m, cmd
+	case "up":
 		if m.projectFocus == focusRepoList && m.selectedRepo > 0 {
 			m.selectedRepo--
 		}
 		return m, nil
-	case "down", "j":
+	case "down":
 		if m.projectFocus == focusRepoList && m.selectedRepo < len(m.repos)-1 {
 			m.selectedRepo++
 		}
@@ -136,19 +139,25 @@ func (m repoModel) updateKey(msg tea.KeyMsg) (repoModel, tea.Cmd) {
 	case "d":
 		if m.projectFocus == focusRepoList {
 			m, cmd = m.deleteRepo()
+			return m, cmd
 		}
-		return m, cmd
+
 	case "esc":
 		if m.projectFocus == focusInput {
-			m.repoInput = ""
+			m.repoInput = m.repoInput.Clear()
 		}
 		m.statusMessage = ""
 		m.statusIsError = false
 		return m, nil
 	}
 
-	if m.projectFocus == focusInput && len(msg.Runes) > 0 {
-		m.repoInput += string(msg.Runes)
+	if m.projectFocus == focusInput {
+		m.repoInput = m.repoInput.SetWidth(m.repoInputContentWidth())
+		nextInput, handled := m.repoInput.Update(msg)
+		m.repoInput = nextInput
+		if handled {
+			return m, nil
+		}
 	}
 	return m, nil
 }
@@ -159,7 +168,7 @@ func (m repoModel) addRepo() (repoModel, tea.Cmd) {
 		m.statusIsError = false
 		return m, nil
 	}
-	raw := strings.TrimSpace(m.repoInput)
+	raw := strings.TrimSpace(m.repoInput.Value())
 	if raw == "" {
 		m.statusMessage = "Please enter a repository URL."
 		m.statusIsError = true
@@ -251,15 +260,12 @@ func (m repoModel) renderRepoInput() string {
 	b.WriteString(mutedStyle.Render("Paste GitHub repo URL, then press enter."))
 	b.WriteString("\n\n")
 
-	inputText := m.repoInput
-	if inputText == "" {
-		inputText = placeholderStyle.Render("https://github.com/owner/repo.git")
-	}
-	cursor := ""
+	m.repoInput = m.repoInput.SetWidth(m.repoInputContentWidth())
+	inputText := m.repoInput.View(false)
 	if m.projectFocus == focusInput {
-		cursor = "█"
+		inputText = m.repoInput.View(true)
 	}
-	b.WriteString(inputStyle.Render("> " + inputText + cursor))
+	b.WriteString(inputStyle.Render("> " + inputText))
 
 	if m.statusMessage != "" {
 		b.WriteString("\n\n")
@@ -300,7 +306,7 @@ func (m repoModel) renderRepoList() string {
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(mutedStyle.Render("tab focus this section, j/k move, d delete"))
+	b.WriteString(mutedStyle.Render("tab focus this section, [up/down] move [enter] [d]elete"))
 
 	style := cardStyle.Border(lipgloss.NormalBorder(), false, false, false, true)
 	if m.projectFocus == focusRepoList {
@@ -312,4 +318,10 @@ func (m repoModel) renderRepoList() string {
 func isRepoURL(raw string) bool {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	return strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "git@")
+}
+
+func (m repoModel) repoInputContentWidth() int {
+	// Keep input one-line and stable; this is the visible content area inside inputStyle.
+	const width = 52
+	return width
 }

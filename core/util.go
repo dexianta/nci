@@ -77,3 +77,12 @@ func RemoveRepos(repos []CodeRepo, name string) (ret []CodeRepo) {
 	}
 	return ret
 }
+
+func RemoveBranchConf(confs []BranchConf, repo, ref string) (ret []BranchConf) {
+	for _, conf := range confs {
+		if conf.RefPattern != ref || conf.Repo != repo {
+			ret = append(ret, conf)
+		}
+	}
+	return ret
+}

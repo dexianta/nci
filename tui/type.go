@@ -28,7 +28,7 @@ type delBranchMsg struct {
 	err error
 }
 
-type branchesLoadBranchConfMsg struct {
+type loadBranchConfMsg struct {
 	branchConf []core.BranchConf
 	err        error
 }
@@ -36,4 +36,8 @@ type branchesLoadBranchConfMsg struct {
 type branchesLoadJobMsg struct {
 	jobs []core.Job
 	err  error
+}
+
+type selectRepoMsg struct {
+	repo string
 }
