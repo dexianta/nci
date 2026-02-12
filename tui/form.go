@@ -27,8 +27,9 @@ type form struct {
 	mode     formMode
 	input    textInput
 	draftKey string
-	addKV    *KV
-	delKV    *KV
+
+	addKVCmd func(KV) tea.Cmd
+	delKVCmd func(KV) tea.Cmd
 
 	statusMessage string
 	statusIsError bool
@@ -43,7 +44,7 @@ func newForm(kvs []KV, valueWidth int, editable bool) form {
 	}
 }
 
-func (f form) Update(msg tea.KeyMsg) (form, bool) {
+func (f form) Update(msg tea.KeyMsg) (form, tea.Cmd, bool) {
 	var handled bool
 	if f.mode != formModeBrowse {
 		return f.updateInputMode(msg)
@@ -53,33 +54,34 @@ func (f form) Update(msg tea.KeyMsg) (form, bool) {
 	case "up":
 		if len(f.kvs) > 0 {
 			f.idx = modIdx(f.idx, len(f.kvs), -1)
-			handled = true
+			return f, nil, true
 		}
 	case "down":
 		if len(f.kvs) > 0 {
 			f.idx = modIdx(f.idx, len(f.kvs), 1)
-			handled = true
+			return f, nil, true
 		}
 	case "e":
 		if len(f.kvs) > 0 {
 			f.mode = formModeEditValue
 			f.input = f.input.SetWidth(f.valueContentWidth()).SetValue(f.kvs[f.idx].val)
-			handled = true
+			return f, nil, true
 		}
 	case "a":
 		if f.editable {
 			f.mode = formModeAddKey
 			f.input = f.input.SetWidth(f.keyContentWidth()).Clear()
 			f.draftKey = ""
-			handled = true
+			return f, nil, true
 		}
 	case "d":
 		if f.editable {
-			f = f.deleteAtSelection()
-			handled = true
+			var cmd tea.Cmd
+			f, cmd = f.deleteAtSelection()
+			return f, cmd, true
 		}
 	}
-	return f, handled
+	return f, nil, handled
 }
 
 func (f form) View() string {
@@ -153,53 +155,58 @@ func (f form) helpText() string {
 	}
 }
 
-func (f form) updateInputMode(msg tea.KeyMsg) (form, bool) {
+func (f form) updateInputMode(msg tea.KeyMsg) (form, tea.Cmd, bool) {
 	switch msg.String() {
 	case "esc":
 		f.mode = formModeBrowse
 		f.input = f.input.Clear()
 		f.draftKey = ""
-		return f, true
+		return f, nil, true
 	case "enter":
-		return f.commitInput(), true
+		f, cmd := f.commitInput()
+		return f, cmd, true
 	}
 
 	nextInput, handled := f.input.Update(msg)
 	f.input = nextInput
-	return f, handled
+	return f, nil, handled
 }
 
-func (f form) commitInput() form {
+func (f form) commitInput() (form, tea.Cmd) {
 	raw := f.input.Value()
 
 	switch f.mode {
 	case formModeEditValue:
 		if len(f.kvs) == 0 {
-			return f
+			return f, nil
 		}
 		sanitized, err := sanitizeValueForType(f.kvs[f.idx].dtype, raw)
 		if err != nil {
 			f.statusMessage = fmt.Sprintf("Invalid value for %s: %v", f.kvs[f.idx].key, err)
 			f.statusIsError = true
-			return f
+			return f, nil
 		}
 		f.kvs[f.idx].val = sanitized
 		f.statusMessage = fmt.Sprintf("Updated value: %s", f.kvs[f.idx].key)
 		f.statusIsError = false
 		f.mode = formModeBrowse
 		f.input = f.input.Clear()
-		f.addKV = &f.kvs[f.idx]
+		if f.addKVCmd == nil {
+			return f, nil
+		}
+		return f, f.addKVCmd(f.kvs[f.idx])
+
 	case formModeAddKey:
 		key := strings.TrimSpace(raw)
 		if key == "" {
 			f.statusMessage = "Key cannot be empty."
 			f.statusIsError = true
-			return f
+			return f, nil
 		}
 		if f.hasDuplicateKey(key, -1) {
 			f.statusMessage = "Key already exists."
 			f.statusIsError = true
-			return f
+			return f, nil
 		}
 		f.draftKey = key
 		f.input = f.input.SetWidth(f.valueContentWidth()).Clear()
@@ -213,22 +220,27 @@ func (f form) commitInput() form {
 		if err != nil {
 			f.statusMessage = fmt.Sprintf("Invalid value: %v", err)
 			f.statusIsError = true
-			return f
+			return f, nil
 		}
-		f.kvs = append(f.kvs, KV{
+
+		kv := KV{
 			key:   f.draftKey,
 			val:   sanitized,
 			dtype: dtype,
-		})
+		}
+		f.kvs = append(f.kvs, kv)
 		f.idx = len(f.kvs) - 1
 		f.mode = formModeBrowse
 		f.statusMessage = "Added new entry."
 		f.statusIsError = false
 		f.input = f.input.Clear()
 		f.draftKey = ""
-		f.addKV = &f.kvs[f.idx]
+		if f.addKVCmd != nil {
+			return f, f.addKVCmd(kv)
+		}
+		return f, nil
 	}
-	return f
+	return f, nil
 }
 
 func (f form) hasDuplicateKey(key string, exceptIdx int) bool {
@@ -243,22 +255,24 @@ func (f form) hasDuplicateKey(key string, exceptIdx int) bool {
 	return false
 }
 
-func (f form) deleteAtSelection() form {
+func (f form) deleteAtSelection() (form, tea.Cmd) {
 	if len(f.kvs) == 0 {
 		f.statusMessage = "No entry to delete."
 		f.statusIsError = true
-		return f
+		return f, nil
 	}
 
 	deleted := f.kvs[f.idx]
-	f.delKV = &deleted
 	f.kvs = append(f.kvs[:f.idx], f.kvs[f.idx+1:]...)
 	if f.idx >= len(f.kvs) && f.idx > 0 {
 		f.idx--
 	}
 	f.statusMessage = fmt.Sprintf("Deleted: %s", deleted.key)
 	f.statusIsError = false
-	return f
+	if f.delKVCmd == nil {
+		return f, nil
+	}
+	return f, f.delKVCmd(deleted)
 }
 
 func sanitizeValueForType(dtype, raw string) (string, error) {
@@ -312,34 +326,4 @@ func (f form) keyContentWidth() int {
 		return 22
 	}
 	return w
-}
-
-func renderInputViewport(input string, cursor, width int) string {
-	if width < 1 {
-		width = 1
-	}
-
-	runes := []rune(input)
-	if cursor < 0 {
-		cursor = 0
-	}
-	if cursor > len(runes) {
-		cursor = len(runes)
-	}
-
-	visibleInput := max(
-		// keep room for cursor block
-		width-1, 1)
-
-	start := 0
-	if cursor > visibleInput {
-		start = cursor - visibleInput
-	}
-	end := min(start+visibleInput, len(runes))
-
-	segment := runes[start:end]
-	pos := min(max(cursor-start, 0), len(segment))
-
-	withCursor := string(segment[:pos]) + "|" + string(segment[pos:])
-	return truncateRunes(withCursor, width)
 }

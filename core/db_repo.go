@@ -13,6 +13,16 @@ type BranchConf struct {
 	ScriptPath string
 }
 
+type RepoSetting struct {
+	Repo  string
+	Key   string
+	Value string
+}
+
+type GlobalSetting struct {
+	LogRetentionDays int
+}
+
 type Job struct {
 	Repo   string
 	Ref    string // refs/heads/main
@@ -47,6 +57,11 @@ type DbRepo interface {
 	SaveCodeRepo(repo CodeRepo) error
 	ListCodeRepo() ([]CodeRepo, error)
 	DeleteRepo(repo string) error
+
+	SaveRepoSetting(setting RepoSetting) error
+	ListRepoSetting(repo string) ([]RepoSetting, error)
+	DeleteRepoSetting(repo, key string) error
+	DeleteRepoSettingByRepo(repo string) error
 
 	FetchJob(repo, ref, sha string) (Job, error)
 	CreateJob(repo, ref, sha string) error

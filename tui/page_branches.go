@@ -96,11 +96,34 @@ func (b branchModel) Update(msg tea.Msg) (branchModel, tea.Cmd, bool) {
 	switch m := msg.(type) {
 	case addBranchMsg:
 		// render new kvs for the form
-		b.branchConf = append(b.branchConf, m.added)
+		// need to check duplicate
+		if m.err != nil {
+			b.statusInErr = true
+			b.statusMsg = m.err.Error()
+		} else {
+			var updated bool
+			for i, bc := range b.branchConf {
+				if bc.Repo == m.added.Repo && bc.RefPattern == m.added.RefPattern {
+					b.branchConf[i] = m.added
+					updated = true
+					break
+				}
+			}
+			if !updated && m.added.Repo == b.repo {
+				b.branchConf = append(b.branchConf, m.added)
+			}
+		}
 		return b, nil, true
 	case delBranchMsg:
 		// render new kvs for the form
-		b.branchConf = core.RemoveBranchConf(b.branchConf, m.del.Repo, m.del.RefPattern)
+		if m.err != nil {
+			b.statusInErr = true
+			b.statusMsg = m.err.Error()
+		} else {
+			if m.del.Repo == b.repo {
+				b.branchConf = core.RemoveBranchConf(b.branchConf, m.del.Repo, m.del.RefPattern)
+			}
+		}
 		return b, nil, true
 
 	case selectRepoMsg: // can be reused for reload
@@ -128,25 +151,46 @@ func (b branchModel) Update(msg tea.Msg) (branchModel, tea.Cmd, bool) {
 		case 0:
 			var handled bool
 			// each switch need to fetch the job
-			b.branchConfForm, handled = b.branchConfForm.Update(m)
+			var cmd tea.Cmd
+			addCmd := func(kv KV) tea.Cmd {
+				return func() tea.Msg {
+					bc := core.BranchConf{
+						Repo:       b.repo,
+						RefPattern: kv.key,
+						ScriptPath: kv.val,
+					}
+					err := b.dbRepo.SaveBranchConf(bc)
+					return addBranchMsg{
+						added: bc,
+						err:   err,
+					}
+				}
+			}
+			delCmd := func(kv KV) tea.Cmd {
+				return func() tea.Msg {
+					bc := core.BranchConf{
+						Repo:       b.repo,
+						RefPattern: kv.key,
+						ScriptPath: kv.val,
+					}
+					err := b.dbRepo.DeleteBranchConf(b.repo, kv.key)
+					return delBranchMsg{
+						del: bc,
+						err: err,
+					}
+				}
+			}
+			b.branchConfForm.addKVCmd = addCmd
+			b.branchConfForm.delKVCmd = delCmd
+			b.branchConfForm, cmd, handled = b.branchConfForm.Update(m)
 			b.selectedBranchConf = b.branchConfForm.idx
 			b.selectedJobs = 0
-			addKV, delKV := b.branchConfForm.addKV, b.branchConfForm.delKV
-			var addCmd, delCmd tea.Cmd
-			if addKV != nil {
-				addCmd = addBranchConfCmd(b.dbRepo, b.repo, addKV.key, addKV.val)
-				b.branchConfForm.addKV = nil
-			}
-			if delKV != nil {
-				delCmd = delBranchConfCmd(b.dbRepo, b.repo, delKV.key)
-				b.branchConfForm.delKV = nil
-			}
-			return b, tea.Batch(addCmd, delCmd), handled
+			return b, cmd, handled
 
 		case 1:
 			switch m.String() {
 			case "up":
-				b.selectedJobs = modIdx(b.selectedJobs, len(b.jobs), 1)
+				b.selectedJobs = modIdx(b.selectedJobs, len(b.jobs), -1)
 				return b, nil, true
 			case "down":
 				b.selectedJobs = modIdx(b.selectedJobs, len(b.jobs), 1)

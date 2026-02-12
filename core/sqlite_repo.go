@@ -24,14 +24,20 @@ func NewSQLiteRepo(db *sql.DB) (*SQLiteRepo, error) {
 func (r SQLiteRepo) ensureSchema() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS code_repos (
-			repo TEXT PRIMARY KEY,
-			url TEXT NOT NULL
-		);`,
+				repo TEXT PRIMARY KEY,
+				url TEXT NOT NULL
+			);`,
+		`CREATE TABLE IF NOT EXISTS repo_settings (
+				repo TEXT NOT NULL,
+				key TEXT NOT NULL,
+				value TEXT NOT NULL,
+				PRIMARY KEY (repo, key)
+			);`,
 		`CREATE TABLE IF NOT EXISTS branch_conf (
-			repo TEXT NOT NULL,
-			ref_pattern TEXT NOT NULL,
-			script_path TEXT NOT NULL,
-			PRIMARY KEY (repo, ref_pattern)
+				repo TEXT NOT NULL,
+				ref_pattern TEXT NOT NULL,
+				script_path TEXT NOT NULL,
+				PRIMARY KEY (repo, ref_pattern)
 		);`,
 		`CREATE TABLE IF NOT EXISTS jobs (
 			repo TEXT NOT NULL,
@@ -164,6 +170,59 @@ func (r SQLiteRepo) DeleteRepo(repo string) error {
 	_, err := r.db.Exec(`DELETE FROM code_repos WHERE repo = ?`, repo)
 	if err != nil {
 		return fmt.Errorf("delete repo: %w", err)
+	}
+	return nil
+}
+
+func (r SQLiteRepo) SaveRepoSetting(setting RepoSetting) error {
+	_, err := r.db.Exec(
+		`INSERT INTO repo_settings (repo, key, value)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(repo, key) DO UPDATE SET value = excluded.value`,
+		setting.Repo, setting.Key, setting.Value,
+	)
+	if err != nil {
+		return fmt.Errorf("save repo setting: %w", err)
+	}
+	return nil
+}
+
+func (r SQLiteRepo) ListRepoSetting(repo string) ([]RepoSetting, error) {
+	rows, err := r.db.Query(
+		`SELECT repo, key, value FROM repo_settings WHERE repo = ? ORDER BY key ASC`,
+		repo,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list repo setting: %w", err)
+	}
+	defer rows.Close()
+
+	var out []RepoSetting
+	for rows.Next() {
+		var s RepoSetting
+		if err := rows.Scan(&s.Repo, &s.Key, &s.Value); err != nil {
+			return nil, fmt.Errorf("scan repo setting: %w", err)
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate repo setting: %w", err)
+	}
+	return out, nil
+}
+
+func (r SQLiteRepo) DeleteRepoSetting(repo, key string) error {
+	_, err := r.db.Exec(`DELETE FROM repo_settings WHERE repo = ? AND key = ?`, repo, key)
+	if err != nil {
+		return fmt.Errorf("delete repo setting: %w", err)
+	}
+	return nil
+}
+
+func (r SQLiteRepo) DeleteRepoSettingByRepo(repo string) error {
+	_, err := r.db.Exec(`DELETE FROM repo_settings WHERE repo = ?`, repo)
+	if err != nil {
+		return fmt.Errorf("delete repo setting by repo: %w", err)
 	}
 	return nil
 }

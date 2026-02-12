@@ -35,7 +35,7 @@ func newModel(svc core.SvcImpl, dbRepo core.DbRepo) topModel {
 		now:           time.Now(),
 		repoModel:     newRepoModel(svc, dbRepo),
 		branchModel:   newBranchModel(dbRepo, svc),
-		settingsModel: newSettingModel(),
+		settingsModel: newSettingModel(dbRepo),
 	}
 }
 
@@ -61,11 +61,18 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repoModel, cmd1 = m.repoModel.Update(msg)
 		m.branchModel, cmd2, handled = m.branchModel.Update(msg)
 		return m, tea.Batch(cmd1, cmd2)
+	case addBranchMsg, delBranchMsg:
+		m.branchModel, cmd, handled = m.branchModel.Update(msg)
+		return m, cmd
+	case loadRepoSettingMsg, addSettingMsg, delSettingMsg:
+		m.settingsModel, cmd, handled = m.settingsModel.Update(msg)
+		return m, cmd
 	case selectRepoMsg:
-		var cmd1 tea.Cmd
+		var cmd1, cmd2 tea.Cmd
 		m.selectedRepo = mg.repo
 		m.branchModel, cmd1, handled = m.branchModel.Update(msg)
-		return m, cmd1
+		m.settingsModel, cmd2, handled = m.settingsModel.Update(msg)
+		return m, tea.Batch(cmd1, cmd2)
 	}
 
 	// the result of the key stuff
@@ -83,7 +90,7 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.branchModel, cmd, handled = m.branchModel.Update(msg)
 
 			case 2:
-				m.settingsModel, handled = m.settingsModel.Update(msg)
+				m.settingsModel, cmd, handled = m.settingsModel.Update(msg)
 			}
 
 			switch msg.String() {
@@ -144,8 +151,8 @@ func tickCmd() tea.Cmd {
 }
 
 var globalFooter = footerBarStyle.Render(
-	renderHint("esc", "top"),
-	renderHint("ctrl+c", "quit"),
+	renderHint("ESC", "top"),
+	renderHint("CTRL+C", "quit"),
 )
 
 func (m topModel) topHelp() string {

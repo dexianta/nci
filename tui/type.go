@@ -38,6 +38,22 @@ type branchesLoadJobMsg struct {
 	err  error
 }
 
+type loadRepoSettingMsg struct {
+	repo     string
+	settings []core.RepoSetting
+	err      error
+}
+
+type addSettingMsg struct {
+	add core.RepoSetting
+	err error
+}
+
+type delSettingMsg struct {
+	del core.RepoSetting
+	err error
+}
+
 type selectRepoMsg struct {
 	repo string
 }
