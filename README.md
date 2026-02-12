@@ -35,6 +35,20 @@ Old repo/settings screens are intentionally removed.
 - `bash`
 - Go toolchain (for building/running)
 
+## Install
+
+Install from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dexianta/nci/main/install.sh | bash
+```
+
+Install to a custom directory:
+
+```bash
+NCI_INSTALL_DIR="$HOME/bin" curl -fsSL https://raw.githubusercontent.com/dexianta/nci/main/install.sh | bash
+```
+
 ## Commands
 
 ```bash
