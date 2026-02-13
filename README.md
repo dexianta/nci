@@ -1,173 +1,99 @@
-# refci 
+# refci
 
-`refci` is a local CI runner for repos you already control. 
-- fetch refs
-- compare SHA
-- run jobs
+`refci` is a local CI runner for script-first workflows.
 
 ## Why this exists
-0. [The Pain That is Github Actions](https://news.ycombinator.com/item?id=43419701)
-1. I want to deploy faster
-   - a small build on your machine takes seconds, but minutes up there
-   - there are more numbers than I can count when github was just not working, a job queue takes hours to pick up
-   - I get too frustrated with how cache works on github action
-3. Bash scripts can be simple and reliable when run on a warm, persistent machine.
 
-`refci` keeps the runtime local:
-- no remote queue
-- no fresh clone per run
-- no container startup cost by default
+- [The Pain That is Github Actions](https://news.ycombinator.com/item?id=43419701)
+- GitHub Actions YAML can be painful for small, branch/script-driven pipelines.
+- A local, warm runtime is often faster and simpler than remote CI startup overhead.
 
-## What it does today
+## How it works
 
-- Mirrors a GitHub repo locally (`git clone --mirror`)
-- Polls for new branch commits
-- Reads job config from repo `.refci/conf.yml` at `HEAD`
-- Runs matching bash scripts in persistent git worktrees
-- Stores job history in sqlite
-- Shows job list/logs in a TUI
-
-## Current scope
-
-This project currently uses:
-- one sqlite table: `jobs`
-- one TUI page: logs viewer
-
-Old repo/settings screens are intentionally removed.
-
-## Requirements
-
-- `git`
-- `bash`
-- Go toolchain (for building/running)
-
-## Install
-
-Install from GitHub:
+### 1) Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dexianta/refci/main/install.sh | bash
 ```
 
-Install to a custom directory:
+Optional:
 
 ```bash
+REFCI_REF=v0.1.0 curl -fsSL https://raw.githubusercontent.com/dexianta/refci/main/install.sh | bash
 REFCI_INSTALL_DIR="$HOME/bin" curl -fsSL https://raw.githubusercontent.com/dexianta/refci/main/install.sh | bash
 ```
 
-## Commands
-
-```bash
-refci init [path]
-refci clone <git-repo-url>
-refci -e <env_file> [-interval 3s] <repo-target>
-```
-
-Notes:
-- `repo-target` can be `owner/repo`, `owner--repo`, or a path under `repos/`.
-- Run from a refci root (the directory containing `refci.db`).
-
-## Quick start
-
-1. Initialize root:
+### 2) Initialize a root
 
 ```bash
 refci init .
 ```
 
-2. Mirror a repo:
+This creates:
+- `refci.db`
+- `repos/` (mirror repos)
+- `worktrees/` (per-branch worktrees)
+- `logs/` (job logs)
+
+### 3) Clone a repo mirror
 
 ```bash
 refci clone git@github.com:owner/repo.git
 ```
 
-3. In that repo, commit a `.refci/conf.yml` and scripts, for example:
+### 4) Add job config to the repo
+
+Create `.refci/conf.yml` in the repo (top-level dynamic map):
 
 ```yaml
 main-test:
   branch_pattern: main
   path_patterns: []
   script: .refci/main.sh
+
+feature-test:
+  branch_pattern: feature-*
+  path_patterns:
+    - services/**
+  script: .refci/feature.sh
 ```
+
+Each key is the job name. `script` is repo-relative.
+
+### 5) Run refci
+
+From the refci root, run with the repo path:
 
 ```bash
-# .refci/main.sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-echo "run tests"
+refci -e .env ./repos/<repo-path>
 ```
 
-4. Start runner + TUI:
+Accepted repo target forms (path form recommended):
+- `./repos/owner--repo`
+- `/abs/path/to/repos/owner--repo`
+- `owner--repo`
 
-```bash
-refci -e .env owner/repo
-```
+### 6) Runtime loop
 
-## Job config (`.refci/conf.yml`)
-
-Supported keys per job:
-- `branch_pattern`: exact branch or prefix wildcard (`feature-*`)
-- `path_patterns`: optional file filters (glob-like)
-- `script`: repo-relative script path
-
-Parser notes:
-- lightweight parser (not full YAML feature-complete)
-- supports either top-level job map or `actions:` wrapper
-
-## Runtime behavior
-
-Per poll cycle:
+Per interval (default `3s`):
 1. `git fetch --prune origin` on mirror repo
-2. load latest `.refci/conf.yml` from mirror `HEAD`
-3. list local branch heads from mirror refs
-4. for each `(job_name, branch)` compare latest recorded SHA
-5. if changed and path filter matches, queue run
+2. load `.refci/conf.yml` from mirror `HEAD`
+3. list branch heads
+4. compare latest branch SHA with latest recorded job SHA
+5. if changed (and path filter matches), queue run
 
-When queueing:
-- create/update branch worktree at target SHA
-- execute `bash <script>` with workdir = that worktree
-- capture stdout/stderr to `logs/.../*.log`
-- update job status in sqlite
+Queued run behavior:
+- create/reset branch worktree to target SHA
+- run `bash <script>` in that worktree
+- write stdout/stderr log under `logs/...`
+- update `jobs` row in sqlite
 
-If a poll step fails (fetch/conf/load/queue), the app exits with an error.
+If fetch/config/poll fails, refci exits with an error.
 
-## TUI
+### 7) TUI
 
-Logs page only:
+Single logs page:
 - `UP/DOWN`: select job
 - `ENTER`: open log detail
-- `ESC` or `ENTER` (detail view): back
+- `ESC` or `ENTER` (detail): back
 - `CTRL+C`: quit
-
-## refci root layout
-
-```text
-<root>/
-  refci.db
-  repos/
-    owner--repo/          # bare mirror
-  worktrees/
-    owner--repo/
-      main/               # detached worktree per branch
-  logs/
-    owner--repo/
-      <job>-<branch>-<sha12>.log
-```
-
-## Data model
-
-`jobs` primary key:
-- `(repo, name, branch, sha)`
-
-Fields tracked:
-- start/end time
-- status (`pending`, `running`, `finished`, `failed`, `canceled`)
-- message (log path or failure message)
-
-## Non-goals (for now)
-
-- Hosted runners
-- Container orchestration
-- Full GitHub Actions feature parity
-- Full YAML compatibility
