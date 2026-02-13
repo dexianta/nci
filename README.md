@@ -1,11 +1,16 @@
 # refci 
 
-`refci` is a local CI runner for repos you already control. (ref ci: fetch refs, compare SHA, run jobs)
+`refci` is a local CI runner for repos you already control. 
+- fetch refs
+- compare SHA
+- run jobs
 
 ## Why this exists
 0. [The Pain That is Github Actions](https://news.ycombinator.com/item?id=43419701)
 1. I want to deploy faster
-   - A small build on your machine takes seconds, but minutes up there. (some times takes forever to pick up jobs)
+   - a small build on your machine takes seconds, but minutes up there
+   - there are more numbers than I can count when github was just not working, a job queue takes hours to pick up
+   - I get too frustrated with how cache works on github action
 3. Bash scripts can be simple and reliable when run on a warm, persistent machine.
 
 `refci` keeps the runtime local:
