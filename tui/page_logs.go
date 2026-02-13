@@ -178,7 +178,7 @@ func (m logsModel) renderJobList() string {
 		if i == m.selected {
 			lines = append(lines, selectedItemStyle.Render("> "+line))
 		} else {
-			lines = append(lines, line)
+			lines = append(lines, "  "+line)
 		}
 	}
 	if len(lines) == 0 {
