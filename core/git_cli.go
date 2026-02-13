@@ -172,6 +172,7 @@ func LoadJobConfsFromRepo(ctx context.Context, repo, ref string) ([]JobConf, err
 	}
 
 	mirrorPath := filepath.Join(Root, "repos", ToLocalRepo(repoName))
+	// get the latest config with git show
 	content, err := runGitOutput(ctx, mirrorPath, "show", rev+":.refci/conf.yml")
 	if err != nil {
 		return nil, err
@@ -279,7 +280,7 @@ func matchPathParts(patternParts, targetParts []string) bool {
 		if matchPathParts(patternParts[1:], targetParts) {
 			return true
 		}
-		for i := 0; i < len(targetParts); i++ {
+		for i := range targetParts {
 			if matchPathParts(patternParts[1:], targetParts[i+1:]) {
 				return true
 			}
