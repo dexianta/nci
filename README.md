@@ -69,6 +69,21 @@ From the refci root, run with the repo path:
 refci -e .env ./repos/<repo-path>
 ```
 
+`.env` file format:
+- one variable per line: `KEY=value`
+- optional `export` prefix: `export KEY=value`
+- blank lines and lines starting with `#` are ignored
+- surrounding single or double quotes around values are supported
+
+Example:
+
+```dotenv
+# runtime secrets
+API_TOKEN=abc123
+export AWS_REGION=us-east-1
+GREETING="hello world"
+```
+
 Accepted repo target forms (path form recommended):
 - `./repos/owner--repo`
 - `/abs/path/to/repos/owner--repo`
